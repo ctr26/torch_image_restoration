@@ -11,7 +11,9 @@ from tqdm import tqdm
 import dask
 import scipy
 from sklearn.decomposition import PCA
-import sparse
+from scipy.linalg import circulant
+import scipy
+# import sparse
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import minmax_scale
 # import point_spread_function
@@ -234,3 +236,15 @@ def show_psf_grid(variable_psf_image, rows=5, cols=5):
                 ]
             )
     return fig
+
+def make_circulant_from_cropped_psf(psf, in_shape, out_shape):
+    padding = np.rint(np.divide((np.subtract(out_shape, in_shape)), 2)).astype(int)
+    padded_psf = np.pad(
+        psf.reshape(in_shape), pad_width=padding, mode="constant", constant_values=0
+    )
+    centre_coord = np.ravel_multi_index(
+        np.divide(padded_psf.shape, 2).astype(int), dims=padded_psf.shape
+    )
+    rolled_psf = np.roll(padded_psf.flatten(), centre_coord)
+    C = scipy.linalg.circulant(rolled_psf)
+    return C, rolled_psf
