@@ -1,0 +1,20 @@
+name: 2021_image_restoration
+channels:
+  - bioconda
+  - pytorch
+  - idr
+  - ome
+  - conda-forge
+  - defaults
+dependencies:
+  - scikit-learn
+  - pytorch
+  - pyro-ppl
+  - numpy
+  - scipy
+  - matplotlib
+  - ipykernel
+  - dask
+  - ipywidgets
+  - jupyter
+prefix: /home/ctr26/miniconda3/envs/2021_image_restoration
