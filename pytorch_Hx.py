@@ -28,6 +28,9 @@ from pyro.infer import SVI, Trace_ELBO
 import pyro.distributions as dist
 from scipy.linalg import circulant
 from pyro.ops.tensor_utils import convolve
+import matplotlib
+matplotlib.rcParams['figure.figsize'] = (20, 10)
+
 
 # %%
 psf_w, psf_h, sigma, scale = 64, 64, 1, 4  # Constants
@@ -96,7 +99,6 @@ for t in pbar:
     optimizer.step()
     pbar.set_postfix({"loss":f'{loss:.2f}'})
     # scheduler.step(loss)
-    print()
     # print(optimizer.state_dict()["param_groups"][0]["lr"])
     with torch.no_grad():
         for param in model.parameters():
