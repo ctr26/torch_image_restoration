@@ -15,6 +15,19 @@ import torch
 import matplotlib.pyplot as plt
 from tqdm.notebook import tqdm
 import utils
+import pyro
+from torch.distributions import constraints
+import pyro.distributions as dist
+import torch.distributions.constraints as constraints
+import math
+import os
+import torch
+import torch.distributions.constraints as constraints
+from pyro.optim import Adam
+from pyro.infer import SVI, Trace_ELBO
+import pyro.distributions as dist
+from scipy.linalg import circulant
+from pyro.ops.tensor_utils import convolve
 
 # %%
 psf_w, psf_h, sigma, scale = 64, 64, 1, 4  # Constants
@@ -74,15 +87,16 @@ model = HTorch(H_torch)
 loss_fn = torch.nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=1000)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
-
-for t in tqdm(range(10000)):
+pbar=tqdm(range(100))
+for t in pbar:
     y_pred = model()
     loss = loss_fn(y_pred, y.double())
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+    pbar.set_postfix({"loss":f'{loss:.2f}'})
     # scheduler.step(loss)
-    print(loss)
+    print()
     # print(optimizer.state_dict()["param_groups"][0]["lr"])
     with torch.no_grad():
         for param in model.parameters():
@@ -99,5 +113,56 @@ ax[0, 1].imshow(y_pred.detach().numpy().reshape(
 ax[1, 1].imshow(model.x.detach().numpy().reshape(
     astro.shape)).axes.set_title("guess")
 plt.tight_layout()
+plt.show()
+# %%
 
+# y = (H*x)+n
+# @pyro.condition(data={"Hx": y})
+
+
+def model(y, H):
+    x = pyro.param("x", torch.tensor(x_0).float(),
+                   constraint=constraints.positive)
+    Hx = torch.matmul(H, x).float()
+    pyro.sample("f", dist.Poisson(Hx).to_event(1), obs=y)
+
+# MLE means we can ignore the guide function
+# MAP would mean that the guide (prior/posteri?) would be a delta function
+
+
+def guide(y, H):
+    pass
+
+# def guide(y,H):
+#     f_map = pyro.param("f_map", torch.tensor(0.5),
+#                        constraint=constraints.unit_interval)
+#     pyro.sample("latent_fairness", dist.Delta(f_map))
+
+# Setup the optimizer
+adam_params = {"lr": 0.01}
+optimizer = Adam(adam_params)
+
+# Setup the inference algorithm
+# https://en.wikipedia.org/wiki/Evidence_lower_bound
+svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+
+loss = []
+pyro.clear_param_store()
+n_steps = 100
+pbar = tqdm(range(n_steps))
+for step in pbar:
+    loss.append(svi.step(y.int(), torch.tensor(H).float()))
+    pbar.set_postfix({"loss":f'{loss[-1]:.2f}'})
+    # print(loss[-1])
+
+
+fig, ax = plt.subplots(2, 2)
+ax[0, 0].imshow(astro).axes.set_title("astro")
+ax[1, 0].imshow(astro_blur).axes.set_title("astro_blur")
+# ax[0].imshow(y.reshape(astro.shape)).set_title("y_true")
+# ax[0, 1].imshow(pyro.param("x").reshape(astro.shape).detach().numpy().reshape(
+    # astro.shape)).axes.set_title("y_pred")
+ax[1, 1].imshow(pyro.param("x").detach().numpy().reshape(astro.shape)).axes.set_title("guess")
+plt.tight_layout()
+plt.show()
 # %%
