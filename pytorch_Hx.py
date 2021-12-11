@@ -157,6 +157,7 @@ for step in pbar:
     pbar.set_postfix({"loss":f'{loss[-1]:.2f}'})
     # print(loss[-1])
 
+# %%
 
 fig, ax = plt.subplots(2, 2)
 ax[0, 0].imshow(astro).axes.set_title("astro")
