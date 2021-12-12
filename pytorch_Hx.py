@@ -4,6 +4,7 @@
 import torch.nn as nn
 import os
 import utils
+import scipy
 from scipy.ndimage import gaussian_filter
 import numpy as np
 from skimage.transform import rescale, resize, downscale_local_mean
@@ -104,18 +105,64 @@ for t in pbar:
         for param in model.parameters():
             param.clamp_(0, torch.inf)
 
+mse_guess = model.x.detach().numpy().reshape(astro.shape)
+
 # %%
 
-fig, ax = plt.subplots(2, 2)
-ax[0, 0].imshow(astro).axes.set_title("astro")
-ax[1, 0].imshow(astro_blur).axes.set_title("astro_blur")
-# ax[0].imshow(y.reshape(astro.shape)).set_title("y_true")
-ax[0, 1].imshow(y_pred.detach().numpy().reshape(
-    astro.shape)).axes.set_title("y_pred")
-ax[1, 1].imshow(model.x.detach().numpy().reshape(
-    astro.shape)).axes.set_title("guess")
-plt.tight_layout()
-plt.show()
+H_torch = torch.tensor(
+    H, dtype=torch.float
+).to_sparse()  # This is sparse, utterlly full of zeros, speeds everything up
+b_torch = torch.tensor(f, dtype=torch.float)
+x_torch = torch.tensor(
+    x_0, requires_grad=True, dtype=torch.float
+)  # Requires grad is magic
+
+# For Poisson noise
+def p_x_given_b(b,Ax):
+    # This is log(p(x|b))
+    log_b_factorial = torch.lgamma(b+1)
+    return torch.multiply(torch.log(Ax), (b)) - Ax - log_b_factorial
+
+def log_liklihood_x_given_b(b,Ax):
+    return -torch.sum(
+        p_x_given_b(b,Ax)
+    )
+
+y_pred = torch.matmul(H_torch, b_torch)
+
+lr = torch.sqrt(torch.norm(p_x_given_b(b_torch,y_pred)))
+lr = 1000
+
+model = HTorch(H_torch)
+loss_fn = log_liklihood_x_given_b
+optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+# optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+
+# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+pbar=tqdm(range(100))
+for t in pbar:
+    y_pred = model();y_pred
+    # lr = torch.norm(p_x_given_b(b_torch,torch.matmul(H_torch, b_torch)))
+
+    with torch.no_grad():
+        for param in model.parameters():
+            param.clamp_(0.000001, torch.inf)
+    # loss = loss_fn(y.double(),y_pred)
+    loss = loss_fn(b_torch,y_pred);loss
+    # loss = loss_fn(y_pred,b_torch)
+    optimizer.param_groups[0]['lr'] = lr
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    with torch.no_grad():
+        for param in model.parameters():
+            param.clamp_(0.000001, torch.inf)
+    pbar.set_postfix({"loss":f'{loss:.2f}',
+                      "y_pred":f'{y_pred.min().detach().numpy():.2f}',
+                      })
+mle_guess = model.x.detach().numpy().reshape(astro.shape)
+
+
 # %%
 
 # y = (H*x)+n
@@ -141,7 +188,7 @@ def guide(y, H):
 #     pyro.sample("latent_fairness", dist.Delta(f_map))
 
 # Setup the optimizer
-adam_params = {"lr": 0.01}
+adam_params = {"lr": 0.001}
 optimizer = Adam(adam_params)
 
 # Setup the inference algorithm
@@ -157,14 +204,20 @@ for step in pbar:
     pbar.set_postfix({"loss":f'{loss[-1]:.2f}'})
     # print(loss[-1])
 
+svi_guess = pyro.param("x").detach().numpy().reshape(astro.shape)
+# svi_guess = pyro.param("f").detach().numpy().reshape(astro.shape)
+
 # %%
 
-fig, ax = plt.subplots(2, 2)
+fig, ax = plt.subplots(2, 3)
 ax[0, 0].imshow(astro).axes.set_title("astro")
-ax[1, 0].imshow(astro_blur).axes.set_title("astro_blur")
-# ax[0].imshow(y.reshape(astro.shape)).set_title("y_true")
-ax[0, 1].imshow(y_pred.detach().numpy().reshape(astro.shape)).axes.set_title("y_pred")
-ax[1, 1].imshow(pyro.param("x").detach().numpy().reshape(astro.shape)).axes.set_title("guess")
+ax[0, 1].imshow(astro_blur).axes.set_title("astro_blur")
+ax[0,2].set_axis_off()
+
+ax[1, 0].imshow(mse_guess).axes.set_title("mse_guess")
+ax[1, 1].imshow(mle_guess).axes.set_title("mle_guess")
+ax[1, 2].imshow(svi_guess).axes.set_title("svi_guess")
 plt.tight_layout()
 plt.show()
+
 # %%
