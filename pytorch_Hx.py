@@ -32,18 +32,24 @@ from pyro.ops.tensor_utils import convolve
 import matplotlib
 import pandas as pd
 import xarray as xr
+from sklearn.metrics import mean_squared_error
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity as ssim
 matplotlib.rcParams['figure.figsize'] = (20, 10)
 
 STEPS = 500
+LR = 1e1
+
 results = pd.DataFrame()
 results = xr.DataArray()
+results = []
+
 # %%
 psf_w, psf_h, sigma, scale = 64, 64, 1, 4  # Constants
 stop_loss = 1e-2
 step_size = 20 * stop_loss / 3.0
 
 astro = (rescale(color.rgb2gray(data.astronaut()), 1.0 / scale)
-         * 2**16).astype(int)  # Raw image
+         * (2**16)/10).astype(int)  # Raw image
 psf = np.zeros((psf_w, psf_h))
 psf[psf_w // 2, psf_h // 2] = 1
 psf = gaussian_filter(psf, sigma=sigma)  # PSF
@@ -90,6 +96,18 @@ def log_liklihood_x_given_b(b, Ax):
     return -torch.sum(
         p_x_given_b(b, Ax)
     )
+
+def aesthics(astro,comparsion,method,iteration):
+    return pd.DataFrame(
+            {
+            "method":method,
+            "mse_gt":mean_squared_error(comparsion, astro),
+            "psnr_gt":peak_signal_noise_ratio(comparsion, astro,data_range=astro.max() - astro.min()),
+            # "ssim_gt":ssim(np.array(comparsion).astype(np.float64),
+            #             np.array(astro)).astype(np.float64),
+            "ssim_gt":ssim(comparsion,astro,data_range=astro.max() - astro.min()),
+            "iteration":iteration
+            },index=[0])
 #  %%
 class HTorch(nn.Module):
     def __init__(self, H):
@@ -97,23 +115,33 @@ class HTorch(nn.Module):
         self.H = H
         # self.x_0 = x_0
         # self.x = torch.nn.Linear(H.shape[0], 1)
-        self.x = torch.nn.Parameter(x_torch)
+        self.x_torch = torch.tensor(
+                x_0, requires_grad=True, dtype=torch.float
+            )  # Requires grad is magic
+        self.x = torch.nn.Parameter(self.x_torch)
     # def __call__(self,x):
     #     return torch.matmul(H_torch, x).double()
     def forward(self):
+        # self.x = torch.nn.Parameter((self.x>0)*self.x)
         return torch.matmul(H_torch, self.x).double()
     def predict(self,x):
+        # self.x = torch.nn.Parameter((self.x>0)*self.x)
         return torch.matmul(H_torch.double(), x.double()).double()
 
 
 
 model = HTorch(H_torch)
 loss_fn = torch.nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=1000)
+optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 mse_pred_list = []
 pbar = tqdm(range(STEPS))
+pbar = tqdm(range(50))
+
 for t in pbar:
+    with torch.no_grad():
+        for param in model.parameters():
+            param.clamp_(1, torch.inf)
     y_pred = model()
     loss = loss_fn(y_pred, y.double())
     optimizer.zero_grad()
@@ -126,85 +154,169 @@ for t in pbar:
         for param in model.parameters():
             param.clamp_(0, torch.inf)
     mse_guess = model.x.detach().numpy().reshape(astro.shape)
+    results.append(aesthics(astro,mse_guess,"mse",t))
+
     # results["mse_guess"] = xr.DataArray(
     #     mse_guess, coords={"Iteration": t, "Kind": "mse_guess"})
+plt.imshow(mse_guess)
+plt.show()
 # %%
+
 
 x_torch = torch.tensor(
     x_0, requires_grad=True, dtype=torch.float
 )  # Requires grad is magic
 
 
-model = HTorch(H_torch)
+class HTorch_VT(nn.Module):
+    def __init__(self, H):
+        super(HTorch_VT, self).__init__()
+        self.H = H
+        # self.x_0 = x_0
+        # self.x = torch.nn.Linear(H.shape[0], 1)
+        self.x_torch = torch.tensor(
+                x_0, requires_grad=True, dtype=torch.float
+            )  # Requires grad is magic
+        self.x = torch.nn.Parameter(self.x_torch)
+
+        self.img_T = torch.tensor(np.random.binomial(y.double(),0.5)).double().requires_grad_()
+        self.img_V = y.double() - self.img_T
+    # def __call__(self,x):
+    #     return torch.matmul(H_torch, x).double()
+    def forward(self):
+        # self.x = (self.x>0)*self.x
+
+
+        # self.img_T = torch.tensor(np.random.binomial(y.double(),0.5)).double().requires_grad_()
+        # # self.img_T = torch.tensor(np.random.binomial(y.double(),0.5)).double()
+
+        self.img_T = torch.tensor(np.random.binomial(y.double(),0.5)).double().requires_grad_()
+
+
+        # img_V = y.double() - self.img_T
+        y_pred_T = self.predict(self.img_T.double())+1e-6-y.double()
+        y_pred_V = self.predict(self.img_V.double())+1e-6-y.double()
+
+        return [self.predict(self.x).double(),y_pred_T,y_pred_V]
+        # return (torch.matmul(H_torch, self.x).float(),np.array([0]),np.array([0]))
+        # return torch.matmul(H_torch, self.x).double()
+
+    def predict(self,x):
+        # self.x = torch.nn.Parameter((self.x>0)*self.x)
+        return torch.matmul(H_torch.float(), x.float()).float()
+    # def get_static_V_T(self):
+
+
+model = HTorch_VT(H_torch)
 loss_fn = torch.nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=100)
+loss_fn_poisson = torch.nn.MSELoss()
+
+optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+# optimizer = torch.optim.SGD(model.parameters(), lr=LR)
+
 # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 mse_pred_list = []
 pbar = tqdm(range(STEPS))
+pbar = tqdm(range(500))
+pbar = tqdm(range(100))
 
-for t in pbar:
-    y_pred = model()
-    
-    img_T = torch.tensor(np.random.binomial(y.double(),0.5))
-    img_V = y.double() - img_T
+for lamba_reg in [1,10,100,1000]:
+    for t in pbar:
+        # y_pred = model()
+        with torch.no_grad():
+            for param in model.parameters():
+                param.clamp_(1, torch.inf)
+        y_pred,y_pred_T,y_pred_V = model()
 
-    y_pred_T = model.predict(img_T.double())+1e-6
-    y_pred_V = model.predict(img_V.double())+1e-6
+        # img_T = torch.tensor(np.random.binomial(y.double(),0.5))
+        # img_V = y.double() - img_T
 
-    # poisson_thin_guess_loss = torch.nn.functional.cosine_similarity(
-    #     torch.sqrt((y_pred_T-y_pred)**2).ravel(),
-    #     torch.sqrt((y_pred_V-y_pred)**2).ravel(),
-    #     dim=0);poisson_thin_guess_loss
+        # y_pred_T = model.predict(img_T.double())+1e-6
+        # y_pred_V = model.predict(img_V.double())+1e-6
 
-    poisson_thin_guess_loss = (torch.nn.functional.cosine_similarity(
-        (y_pred_T-y_pred).ravel().unsqueeze(0),
-        (y_pred_V-y_pred).ravel().unsqueeze(0),
-        dim=0)>0).int();poisson_thin_guess_loss
+        # poisson_thin_guess_loss = torch.nn.functional.cosine_similarity(
+        #     torch.sqrt((y_pred_T-y_pred)**2).ravel(),
+        #     torch.sqrt((y_pred_V-y_pred)**2).ravel(),
+        #     dim=0);poisson_thin_guess_loss
 
-    poisson_thin_guess_loss = (torch.nn.functional.cosine_similarity(
-        (y_pred_T).ravel().unsqueeze(0),
-        (y_pred_V).ravel().unsqueeze(0),
-        dim=0)>0).int();poisson_thin_guess_loss
+        # poisson_thin_guess_loss = (torch.nn.functional.cosine_similarity(
+        #     (y_pred_T-y_pred).ravel().unsqueeze(0),
+        #     (y_pred_V-y_pred).ravel().unsqueeze(0),
+        #     dim=0)>0).int();poisson_thin_guess_loss
 
-    # poisson_thin_guess_loss = (y_pred_T*y_pred_V)>0
-    # poisson_thin_guess_loss = torch.nn.MSELoss()(
-    #     (p_x_given_b(y_pred_T,y_pred)).ravel().unsqueeze(0),
-    #     (p_x_given_b(y_pred_V,y_pred)).ravel().unsqueeze(0),
-    #     );poisson_thin_guess_loss
+        # poisson_thin_guess_loss = -(torch.nn.functional.cosine_similarity(
+        #     (y_pred_T).ravel().unsqueeze(0),
+        #     (y_pred_V).ravel().unsqueeze(0),
+        #     dim=0)>0).int();poisson_thin_guess_loss
+
+        # poisson_thin_guess_loss = (torch.nn.functional.cosine_similarity(
+        #     (y_pred_T).ravel().unsqueeze(0),
+        #     (y_pred_V).ravel().unsqueeze(0),
+        #     dim=0)>0);poisson_thin_guess_loss
+
+        # poisson_thin_guess_loss = (y_pred_T*y_pred_V)>0
+        # poisson_thin_guess_loss = torch.nn.MSELoss()(
+        #     (p_x_given_b(y_pred_T,y_pred)).ravel().unsqueeze(0),
+        #     (p_x_given_b(y_pred_V,y_pred)).ravel().unsqueeze(0),
+        #     );poisson_thin_guess_loss
+            
+
+        poisson_thin_guess_loss = torch.nn.MSELoss()(
+            y_pred_T,y_pred,
+            );poisson_thin_guess_loss
+
+        poisson_thin_guess_loss = torch.nn.MSELoss()(
+            y_pred_T-y_pred_V,y_pred,
+            );poisson_thin_guess_loss
+        # poisson_thin_guess_loss_T = torch.nn.MSELoss()(
+        #     y_pred_T,y_pred,
+        #     );poisson_thin_guess_loss
+        # poisson_thin_guess_loss_V = torch.nn.MSELoss()(
+        #     y_pred_V,y_pred,
+        #     );poisson_thin_guess_loss
+        # poisson_thin_guess_loss = poisson_thin_guess_loss_T+poisson_thin_guess_loss_V
+        # poisson_thin_guess_loss = 0
+        # poisson_thin_guess_loss = torch.nn.MSELoss()(
+        #     torch.sqrt((y_pred_T-y_pred)**2).ravel(),
+        #     torch.sqrt((y_pred_V-y_pred)**2).ravel());poisson_thin_guess_loss
+
+
+        # loss = loss_fn(y_pred*poisson_thin_guess_loss,y*poisson_thin_guess_loss).double()
         
+        # loss = loss_fn(y_pred*poisson_thin_guess_loss,
+        #             y.double()*poisson_thin_guess_loss)
+        loss = loss_fn(y_pred,y.double())+poisson_thin_guess_loss/lamba_reg
+        # loss = poisson_thin_guess_loss
 
-    poisson_thin_guess_loss = torch.nn.MSELoss()(
-        (y_pred_T),
-        (y_pred_V),
-        );poisson_thin_guess_loss
+        # loss =  poisson_thin_guess_loss
 
-    # poisson_thin_guess_loss = torch.nn.MSELoss()(
-    #     torch.sqrt((y_pred_T-y_pred)**2).ravel(),
-    #     torch.sqrt((y_pred_V-y_pred)**2).ravel());poisson_thin_guess_loss
+        # loss = log_liklihood_x_given_b(b_torch, y_pred)*log_liklihood_x_given_b(y_pred_T, y_pred_V)
+        # loss = log_liklihood_x_given_b(b_torch, y_pred)+poisson_thin_guess_loss
 
+        # loss = torch.nn.MSELoss()(y_pred, y.double())
+        # y_pred
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-    # loss = loss_fn(y_pred*poisson_thin_guess_loss,y*poisson_thin_guess_loss).double()
-    
-    loss = loss_fn(y_pred,y.double()) + poisson_thin_guess_loss
-    # loss = log_liklihood_x_given_b(b_torch, y_pred)*log_liklihood_x_given_b(y_pred_T, y_pred_V)
-    # loss = log_liklihood_x_given_b(b_torch, y_pred)+poisson_thin_guess_loss
-
-    # loss = torch.nn.MSELoss()(y_pred, y.double())
-    # y_pred
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-
-    pbar.set_postfix({"loss": f'{loss:.2f}'})
-    # scheduler.step(loss)
-    # print(optimizer.state_dict()["param_groups"][0]["lr"])
-    with torch.no_grad():
-        for param in model.parameters():
-            param.clamp_(0, torch.inf)
-    poisson_thin_guess = model.x.detach().numpy().reshape(astro.shape)
-    # results["mse_guess"] = xr.DataArray(
-    #     mse_guess, coords={"Iteration": t, "Kind": "mse_guess"})
-
+        pbar.set_postfix(
+                {"loss": f'{loss:.2f}',
+                "poisson_thin_guess_loss": f'{poisson_thin_guess_loss:.2f}'}
+                )
+        # pbar.set_postfix(
+        #         {"loss": f'{loss:.2f}'}
+        #         )
+        # scheduler.step(loss)
+        # print(optimizer.state_dict()["param_groups"][0]["lr"])
+        with torch.no_grad():
+            for param in model.parameters():
+                param.clamp_(0, torch.inf)
+        poisson_thin_guess = model.x.detach().numpy().reshape(astro.shape)
+        # results["mse_guess"] = xr.DataArray(
+        #     mse_guess, coords={"Iteration": t, "Kind": "mse_guess"})
+        results.append(aesthics(astro,poisson_thin_guess,f"poisson_thin-{lamba_reg}",t))
+    plt.imshow(poisson_thin_guess)
+    plt.show()
 # %%
 
 H_torch = torch.tensor(
@@ -220,8 +332,9 @@ x_torch = torch.tensor(
 
 y_pred = torch.matmul(H_torch, b_torch)
 
-lr = torch.sqrt(torch.norm(p_x_given_b(b_torch+1e-6, y_pred))); lr
-lr = 1000
+# lr = torch.sqrt(torch.norm(p_x_given_b(b_torch+1e-6, y_pred))); lr
+# lr = 1000
+lr = LR
 
 model = HTorch(H_torch)
 loss_fn = log_liklihood_x_given_b
@@ -232,6 +345,8 @@ optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 mle_pred_list = []
 # %%
 pbar = tqdm(range(STEPS))
+pbar = tqdm(range(50))
+
 for t in pbar:
     y_pred = model()
 
@@ -263,6 +378,8 @@ for t in pbar:
                       "lr": f'{lr:.2f}',
                       })
     mle_guess = model.x.detach().numpy().reshape(astro.shape)
+    results.append(aesthics(astro,mle_guess,"mle",t))
+
     # results["mle_guess"] = mle_guess
 
 
@@ -305,7 +422,9 @@ n_steps = 100
 
 mle_pred_list = []
 
-pbar = tqdm(range(n_steps))
+pbar = tqdm(range(STEPS))
+pbar = tqdm(range(50))
+
 for step in pbar:
     loss.append(svi.step(y.int(), torch.tensor(H).float()))
     # y_pred = pyro.param("x").detach().numpy()
@@ -313,8 +432,23 @@ for step in pbar:
     # print(loss[-1])
     svi_guess = pyro.param("x").detach().numpy().reshape(astro.shape)
     # results["svi_guess"] = svi_guess
+    results.append(aesthics(astro,svi_guess,"SVI",step))
 
 # svi_guess = pyro.param("f").detach().numpy().reshape(astro.shape)
+# %%
+
+import seaborn as sns
+df = pd.concat(results)
+
+sns.lmplot(x="iteration",y="ssim_gt",hue="method",data=df,sharey=True,fit_reg=False)
+plt.show()
+
+sns.lmplot(x="iteration",y="mse_gt",hue="method",data=df,sharey=True,fit_reg=False)
+plt.show()
+
+sns.lmplot(x="iteration",y="psnr_gt",hue="method",data=df,sharey=True,fit_reg=False)
+plt.show()
+
 
 # %%
 
@@ -332,8 +466,7 @@ plt.show()
 
 # %%
 
-from sklearn.metrics import mean_squared_error
-from skimage.metrics import structural_similarity as ssim
+
 
 {"mse_mse":mean_squared_error(mse_guess, astro),
 "mse_mle":mean_squared_error(mle_guess, astro),
@@ -377,9 +510,7 @@ mle_pred_list = []
 
 pbar = tqdm(range(40))
 for t in pbar:
-    with torch.no_grad():
-        for param in model.parameters():
-            param.clamp_(1, torch.inf)
+
     y_pred = model()
 
     # lr = torch.norm(p_x_given_b(b_torch,torch.matmul(H_torch, b_torch)))
