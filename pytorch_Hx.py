@@ -1,4 +1,5 @@
 # %%
+from sympy import hyper
 import torch.nn as nn
 import os
 import utils
@@ -35,12 +36,17 @@ from skimage.metrics import peak_signal_noise_ratio, structural_similarity as ss
 
 matplotlib.rcParams["figure.figsize"] = (20, 10)
 
-STEPS = 1000
+STEPS = 10000
 GAIN = 1000
 
-LR = 1e-3
+LR = 5e-4
 
 optimizers = [torch.optim.SGD, torch.optim.Adam]
+
+# hyper_params = [{"optimizer":torch.optim.SGD,
+#                 "lr":1e-3},
+#                 {"optimzer":torch.optim.Adam,
+#                 "lr":1e-3}]
 # optimizers = [torch.optim.SGD]
 
 results = pd.DataFrame()
@@ -88,15 +94,24 @@ f = np.asarray(np.matrix(astro_blur.flatten()).transpose()).reshape(
 
 # Torch them
 
+
 x_0 = (
     np.asarray(np.matmul(H.transpose(), f / H_T_1.cpu())).reshape((-1,)) / H_T_1.cpu()
 )  # x0 is the initial guess image
+
 
 b_torch = torch.tensor(f, dtype=torch.float, device=device)
 x_torch = (
     torch.tensor(x_0, requires_grad=True, dtype=torch.float, device=device) + 1e-6
 )  # Requires grad is magic
 
+
+rl_step = np.matmul(H.transpose(), x_0 / np.matmul(H, x_0)) / H_T_1.cpu()
+rl_lr = rl_step.sum() / (2 * len(rl_step))
+
+LR = rl_lr
+# Made up:
+# rl_lr = torch.norm(b_torch / H_T_1) / len(b_torch)
 
 # print('Loss before: %s' % (torch.norm(torch.matmul(H_torch, x_torch) - b_torch)))
 def p_x_given_b(b, Ax):
