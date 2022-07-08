@@ -63,8 +63,8 @@ psf = gaussian_filter(psf, sigma=sigma)  # PSF
 
 astro_blur = conv2(astro, psf, "same")  # Blur image
 rng = np.random.default_rng()
-astro_blur = (rng.poisson(astro_blur).astype(int))
-y = torch.tensor(astro_blur.flatten(),device=device).double()
+astro_blur = rng.poisson(astro_blur).astype(int)
+y = torch.tensor(astro_blur.flatten(), device=device).double()
 #  %%
 # Function for making circulant matrix because I've not gotten conv2d in torch to work.
 
@@ -73,25 +73,28 @@ H, rolled_psf = utils.make_circulant_from_cropped_psf(
 )  # Get H
 
 H_torch = torch.tensor(
-    H, dtype=torch.float,device=device
+    H, dtype=torch.float, device=device
 ).to_sparse()  # This is sparse, utterlly full of zeros, speeds everything up
 
-H_T_1 = torch.matmul(torch.t(H_torch), torch.ones_like(torch.tensor(astro_blur.flatten(),device=device)).float())
+H_T_1 = torch.matmul(
+    torch.t(H_torch),
+    torch.ones_like(torch.tensor(astro_blur.flatten(), device=device)).float(),
+)
 
 
 f = np.asarray(np.matrix(astro_blur.flatten()).transpose()).reshape(
     (-1,)
-) # f is the recorded image
+)  # f is the recorded image
 
 # Torch them
 
-x_0 = np.asarray(np.matmul(H.transpose(), f/H_T_1.cpu())).reshape(
-    (-1,)
-)/H_T_1.cpu()  # x0 is the initial guess image
+x_0 = (
+    np.asarray(np.matmul(H.transpose(), f / H_T_1.cpu())).reshape((-1,)) / H_T_1.cpu()
+)  # x0 is the initial guess image
 
-b_torch = torch.tensor(f, dtype=torch.float,device=device)
+b_torch = torch.tensor(f, dtype=torch.float, device=device)
 x_torch = (
-    torch.tensor(x_0, requires_grad=True, dtype=torch.float,device=device) + 1e-6
+    torch.tensor(x_0, requires_grad=True, dtype=torch.float, device=device) + 1e-6
 )  # Requires grad is magic
 
 
@@ -130,7 +133,7 @@ class HTorch(nn.Module):
         # self.x_0 = x_0
         # self.x = torch.nn.Linear(H.shape[0], 1)
         self.x_torch = torch.tensor(
-            x_0, requires_grad=True, dtype=torch.float,device=device
+            x_0, requires_grad=True, dtype=torch.float, device=device
         )  # Requires grad is magic
         self.x = torch.nn.Parameter(self.x_torch)
 
@@ -145,16 +148,12 @@ class HTorch(nn.Module):
         return torch.matmul(H_torch.double(), x.double()).double()
 
 
-loss_fn = torch.nn.MSELoss()
-loss_fn = nn.KLDivLoss()
-
-
 class RL_Loss(nn.Module):
     def __init__(self):
         super(RL_Loss, self).__init__()
 
     def forward(self, predictions, true):
-        return log_liklihood_x_given_b(true/H_T_1, predictions/H_T_1)
+        return log_liklihood_x_given_b(true / H_T_1, predictions / H_T_1)
         # return log_liklihood_x_given_b(true, predictions)
 
         # return log_liklihood_x_given_b(predictions/H_T_1, true/H_T_1)
@@ -167,32 +166,42 @@ class KL(nn.Module):
         super(KL, self).__init__()
 
     def forward(self, predictions, true):
-        predictions = (predictions + 1e-6)/H_T_1
-        true = (true + 1e-6)/H_T_1
+        predictions = (predictions + 1e-6) / H_T_1
+        true = (true + 1e-6) / H_T_1
         loss = torch.nn.KLDivLoss(reduction="batchmean")
         # return (true*(true.log()-predictions.log())).sum()
-        return loss(predictions.log(),true)
+        return loss(predictions.log(), true)
+
 
 class NMSE(nn.Module):
     def __init__(self):
         super(NMSE, self).__init__()
 
     def forward(self, predictions, true):
-        return torch.sqrt(torch.nn.functional.mse_loss(predictions+1e-6,true+ 1e-6))
+        return torch.sqrt(torch.nn.functional.mse_loss(predictions + 1e-6, true + 1e-6))
+
 
 class L1_and_L2(nn.Module):
     def __init__(self):
         super(L1_and_L2, self).__init__()
 
     def forward(self, predictions, true):
-        return torch.sqrt(torch.nn.functional.mse_loss(predictions+1e-6,true+ 1e-6))+torch.nn.functional.l1_loss(predictions+1e-6,true+ 1e-6)
+        return torch.sqrt(
+            torch.nn.functional.mse_loss(predictions + 1e-6, true + 1e-6)
+        ) + torch.nn.functional.l1_loss(predictions + 1e-6, true + 1e-6)
+
 
 class L1_and_L2_and_MLE(nn.Module):
     def __init__(self):
         super(L1_and_L2_and_MLE, self).__init__()
 
     def forward(self, predictions, true):
-        return torch.sqrt(torch.nn.functional.mse_loss(predictions+1e-6,true+ 1e-6))+torch.nn.functional.l1_loss(predictions+1e-6,true+ 1e-6)+log_liklihood_x_given_b(true/H_T_1, predictions/H_T_1).log()
+        return (
+            torch.sqrt(torch.nn.functional.mse_loss(predictions + 1e-6, true + 1e-6))
+            + torch.nn.functional.l1_loss(predictions + 1e-6, true + 1e-6)
+            + log_liklihood_x_given_b(true / H_T_1, predictions / H_T_1).log()
+        )
+
 
 # loss_fns = [
 #     torch.nn.KLDivLoss(reduction="batchmean",log_target=True),
@@ -206,12 +215,12 @@ class L1_and_L2_and_MLE(nn.Module):
 loss_fns = [
     L1_and_L2_and_MLE(),
     L1_and_L2(),
-    torch.nn.PoissonNLLLoss(log_input=False,full=True),
+    torch.nn.PoissonNLLLoss(log_input=False, full=True),
     NMSE(),
-#     # torch.nn.MSELoss(),
+    #     # torch.nn.MSELoss(),
     RL_Loss(),
-#    KL(),
-   torch.nn.L1Loss(),
+    #    KL(),
+    torch.nn.L1Loss(),
 ]
 # optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 # optimizer = torch.optim.SGD(model.parameters(), lr=LR)
@@ -631,7 +640,7 @@ sns.lmplot(
 plt.show()
 # %%
 
-df.groupby(["optimizer","loss"]).max()
+df.groupby(["optimizer", "loss"]).max()
 # %%
 
 fig, ax = plt.subplots(2, 4)
