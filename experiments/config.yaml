@@ -1,0 +1,457 @@
+# ============================================================================
+# Torch Image Restoration: Optimizer & Scheduler Experiments
+# ============================================================================
+#
+# This configuration file defines a comprehensive suite of in-silico experiments
+# for testing optimization strategies on image deconvolution tasks.
+#
+# Design Philosophy:
+# 1. Factorial experiments: test one variable at a time
+# 2. Grid searches: explore interactions between variables
+# 3. Theory-driven experiments: RL-seeding, SNR sweeps
+# 4. Metrics: PSNR, SSIM, MSE, convergence speed, compute time
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Global Settings
+# ----------------------------------------------------------------------------
+global:
+  device: "cuda"  # or "cpu"
+  random_seed: 42
+  results_dir: "./results"
+  checkpoint_dir: "./checkpoints"
+  log_level: "INFO"
+  
+  # Default training settings
+  max_iterations: 1000
+  convergence_threshold: 1e-4
+  early_stopping_patience: 50
+  
+  # Metrics to compute
+  metrics:
+    - "psnr"      # Peak Signal-to-Noise Ratio
+    - "ssim"      # Structural Similarity Index
+    - "mse"       # Mean Squared Error
+    - "mae"       # Mean Absolute Error
+    - "time"      # Compute time
+    - "convergence_speed"  # Iterations to reach X% of final quality
+
+# ----------------------------------------------------------------------------
+# Test Data Configuration
+# ----------------------------------------------------------------------------
+data:
+  # Ground truth images
+  images:
+    - name: "astronaut"
+      source: "skimage.data.astronaut"
+      downsample_factor: 4
+      colorspace: "gray"
+    
+    - name: "cameraman"
+      source: "skimage.data.camera"
+      downsample_factor: 2
+      colorspace: "gray"
+    
+    - name: "text"
+      source: "skimage.data.text"
+      downsample_factor: 1
+      colorspace: "gray"
+  
+  # PSF configurations
+  psfs:
+    - name: "gaussian_small"
+      type: "gaussian"
+      size: [64, 64]
+      sigma: 1.0
+      gain: 1000
+    
+    - name: "gaussian_medium"
+      type: "gaussian"
+      size: [64, 64]
+      sigma: 2.0
+      gain: 1000
+    
+    - name: "gaussian_large"
+      type: "gaussian"
+      size: [64, 64]
+      sigma: 4.0
+      gain: 1000
+    
+    - name: "aberrated"
+      type: "defocus"  # Simulated defocus aberration
+      size: [64, 64]
+      radius: 3.0
+      gain: 1000
+  
+  # Noise configurations
+  noise:
+    - name: "low_noise"
+      type: "poisson"
+      snr_db: 40
+    
+    - name: "medium_noise"
+      type: "poisson"
+      snr_db: 30
+    
+    - name: "high_noise"
+      type: "poisson"
+      snr_db: 20
+    
+    - name: "very_high_noise"
+      type: "poisson"
+      snr_db: 10
+
+# ----------------------------------------------------------------------------
+# Experiment 1: Optimizer Comparison (Fixed LR, Vary Optimizer)
+# ----------------------------------------------------------------------------
+experiments:
+  optimizer_comparison:
+    description: "Compare all optimizers with fixed learning rate and constant scheduler"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    psf: "gaussian_medium"
+    noise: "medium_noise"
+    scheduler: "constant"
+    max_iterations: 1000
+    
+    # Sweep over learning rates for each optimizer
+    learning_rates:
+      - 1e-4
+      - 5e-4
+      - 1e-3
+      - 5e-3
+      - 1e-2
+    
+    # Optimizers to test
+    optimizers:
+      - "sgd"
+      - "sgd_momentum"
+      - "adam"
+      - "adamw"
+      - "rmsprop"
+      - "adagrad"
+      - "adadelta"
+      - "nadam"
+      - "radam"
+      # Note: LBFGS requires special handling (closure-based), tested separately
+
+  # --------------------------------------------------------------------------
+  # Experiment 2: Scheduler Comparison (Fixed Optimizer, Vary Scheduler)
+  # --------------------------------------------------------------------------
+  scheduler_comparison:
+    description: "Compare all schedulers with fixed optimizer (Adam)"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    psf: "gaussian_medium"
+    noise: "medium_noise"
+    optimizer: "adam"
+    initial_lr: 1e-3
+    max_iterations: 1000
+    
+    # Schedulers to test
+    schedulers:
+      - "constant"
+      - "step"
+      - "exponential"
+      - "cosine"
+      - "cosine_warm_restarts"
+      - "cyclic"
+      # Note: reduce_on_plateau and one_cycle require special handling
+
+  # --------------------------------------------------------------------------
+  # Experiment 3: Grid Search (Optimizer × Scheduler)
+  # --------------------------------------------------------------------------
+  grid_search:
+    description: "Grid search over optimizer and scheduler combinations"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    psf: "gaussian_medium"
+    noise: "medium_noise"
+    max_iterations: 1000
+    
+    # Grid dimensions
+    optimizers:
+      - "sgd_momentum"
+      - "adam"
+      - "adamw"
+      - "radam"
+    
+    schedulers:
+      - "constant"
+      - "cosine"
+      - "cosine_warm_restarts"
+    
+    learning_rates:
+      - 1e-4
+      - 1e-3
+      - 1e-2
+
+  # --------------------------------------------------------------------------
+  # Experiment 4: SNR Sweep (Noise Robustness)
+  # --------------------------------------------------------------------------
+  snr_sweep:
+    description: "Test optimizer robustness across different noise levels"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    psf: "gaussian_medium"
+    optimizer: "adam"
+    scheduler: "cosine"
+    lr: 1e-3
+    max_iterations: 1000
+    
+    # Sweep over noise levels
+    noise_levels:
+      - "low_noise"       # 40 dB
+      - "medium_noise"    # 30 dB
+      - "high_noise"      # 20 dB
+      - "very_high_noise" # 10 dB
+    
+    # Compare these optimizers
+    optimizers_to_compare:
+      - "adam"
+      - "adamw"
+      - "radam"
+      - "sgd_momentum"
+
+  # --------------------------------------------------------------------------
+  # Experiment 5: PSF Complexity Sweep
+  # --------------------------------------------------------------------------
+  psf_sweep:
+    description: "Test performance on different PSF types and complexities"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    noise: "medium_noise"
+    optimizer: "adam"
+    scheduler: "cosine"
+    lr: 1e-3
+    max_iterations: 1000
+    
+    # Sweep over PSF types
+    psfs:
+      - "gaussian_small"
+      - "gaussian_medium"
+      - "gaussian_large"
+      - "aberrated"
+
+  # --------------------------------------------------------------------------
+  # Experiment 6: Convergence Speed vs Quality Tradeoff
+  # --------------------------------------------------------------------------
+  convergence_analysis:
+    description: "Analyze convergence speed vs final quality for different optimizers"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    psf: "gaussian_medium"
+    noise: "medium_noise"
+    scheduler: "constant"
+    lr: 1e-3
+    max_iterations: 2000  # Longer to see asymptotic behavior
+    
+    # Track metrics at these checkpoints
+    checkpoint_iterations:
+      - 10
+      - 50
+      - 100
+      - 200
+      - 500
+      - 1000
+      - 2000
+    
+    # Quality thresholds (% of final quality)
+    quality_thresholds:
+      - 0.80  # 80% of final
+      - 0.90  # 90% of final
+      - 0.95  # 95% of final
+      - 0.99  # 99% of final
+    
+    optimizers:
+      - "sgd"
+      - "sgd_momentum"
+      - "adam"
+      - "adamw"
+      - "radam"
+
+  # --------------------------------------------------------------------------
+  # Experiment 7: Richardson-Lucy Seeding
+  # --------------------------------------------------------------------------
+  rl_seeding:
+    description: "Test RL warm-start followed by gradient descent refinement"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    psf: "gaussian_medium"
+    noise: "medium_noise"
+    max_iterations: 500
+    
+    # RL warm-up iterations to test
+    rl_warmup_iterations:
+      - 0      # Pure gradient descent (baseline)
+      - 5
+      - 10
+      - 20
+      - 50
+      - 100
+      - 500    # Pure RL (no gradient descent)
+    
+    # Gradient descent configurations after RL warmup
+    post_rl_optimizers:
+      - optimizer: "adam"
+        scheduler: "cosine"
+        lr: 1e-3
+      
+      - optimizer: "adamw"
+        scheduler: "cosine"
+        lr: 1e-3
+      
+      - optimizer: "sgd_momentum"
+        scheduler: "constant"
+        lr: 5e-4
+    
+    # Use RL-derived learning rate?
+    use_rl_derived_lr: true
+
+  # --------------------------------------------------------------------------
+  # Experiment 8: RL-Derived Learning Rate
+  # --------------------------------------------------------------------------
+  rl_lr_comparison:
+    description: "Compare RL-derived LR vs manual LR choices"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    psf: "gaussian_medium"
+    noise: "medium_noise"
+    optimizer: "adam"
+    scheduler: "constant"
+    max_iterations: 1000
+    
+    # Learning rate strategies
+    lr_strategies:
+      - name: "rl_derived"
+        type: "richardson_lucy"
+        n_rl_iterations: 10
+      
+      - name: "manual_1e-4"
+        type: "fixed"
+        value: 1e-4
+      
+      - name: "manual_1e-3"
+        type: "fixed"
+        value: 1e-3
+      
+      - name: "manual_1e-2"
+        type: "fixed"
+        value: 1e-2
+
+  # --------------------------------------------------------------------------
+  # Experiment 9: LBFGS Special Case
+  # --------------------------------------------------------------------------
+  lbfgs_experiment:
+    description: "Test LBFGS optimizer (requires closure-based optimization)"
+    enabled: true
+    
+    # Fixed settings
+    image: "astronaut"
+    psf: "gaussian_medium"
+    noise: "medium_noise"
+    max_iterations: 100  # LBFGS uses fewer iterations
+    
+    # LBFGS configurations
+    lbfgs_configs:
+      - lr: 1.0
+        max_iter: 20
+        history_size: 100
+      
+      - lr: 0.5
+        max_iter: 20
+        history_size: 100
+      
+      - lr: 1.0
+        max_iter: 10
+        history_size: 50
+
+# ----------------------------------------------------------------------------
+# Analysis & Reporting
+# ----------------------------------------------------------------------------
+analysis:
+  # Generate comparison plots
+  plots:
+    - type: "convergence_curves"
+      experiments:
+        - "optimizer_comparison"
+        - "scheduler_comparison"
+        - "rl_seeding"
+    
+    - type: "final_metrics_bar"
+      experiments:
+        - "optimizer_comparison"
+        - "grid_search"
+    
+    - type: "snr_robustness"
+      experiments:
+        - "snr_sweep"
+    
+    - type: "psf_complexity"
+      experiments:
+        - "psf_sweep"
+    
+    - type: "convergence_speed_vs_quality"
+      experiments:
+        - "convergence_analysis"
+    
+    - type: "rl_seeding_benefit"
+      experiments:
+        - "rl_seeding"
+  
+  # Generate summary tables
+  tables:
+    - type: "best_configurations"
+      top_n: 10
+      sort_by: "psnr"
+    
+    - type: "convergence_speed"
+      threshold: 0.95  # 95% of final quality
+      sort_by: "iterations"
+    
+    - type: "compute_efficiency"
+      sort_by: "time_per_psnr_gain"
+  
+  # Statistical tests
+  statistical_tests:
+    - type: "anova"
+      factor: "optimizer"
+      metric: "psnr"
+    
+    - type: "pairwise_t_test"
+      baseline: "adam"
+      metric: "psnr"
+      correction: "bonferroni"
+
+# ----------------------------------------------------------------------------
+# Reproducibility
+# ----------------------------------------------------------------------------
+reproducibility:
+  save_all_checkpoints: false
+  save_final_images: true
+  save_intermediate_images: false  # Save every N iterations
+  intermediate_save_interval: 100
+  
+  # Git integration
+  track_git_commit: true
+  require_clean_repo: false
+  
+  # Environment capture
+  save_environment: true
+  save_package_versions: true
