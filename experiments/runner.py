@@ -162,11 +162,6 @@ def generate_observation(ground_truth: np.ndarray, psf: np.ndarray, noise_config
     # Convolve with PSF
     blurred = convolve2d(ground_truth, psf, mode='same', boundary='symm')
     
-    # Scale to target SNR if specified
-    if 'snr_db' in noise_config:
-        snr_linear = 10 ** (noise_config['snr_db'] / 10)
-        blurred = blurred * snr_linear / (blurred.max() + 1e-10)
-    
     # Add noise
     observed = add_noise(blurred, noise_config)
     
