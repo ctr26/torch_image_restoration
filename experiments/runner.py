@@ -378,7 +378,8 @@ def train_deconvolution(
         # Compute metrics
         with torch.no_grad():
             current_estimate = model.image.cpu().numpy()
-            psnr = peak_signal_noise_ratio(ground_truth, current_estimate, data_range=ground_truth.max())
+            current_estimate = np.clip(current_estimate, 0, 1)  # Clamp to valid range
+            psnr = peak_signal_noise_ratio(ground_truth, current_estimate, data_range=1.0)
             
             # Record history
             loss_history.append(loss.item())
@@ -411,8 +412,9 @@ def train_deconvolution(
     # Final metrics
     with torch.no_grad():
         final_estimate = model.image.cpu().numpy()
-        final_psnr = peak_signal_noise_ratio(ground_truth, final_estimate, data_range=ground_truth.max())
-        final_ssim = structural_similarity(ground_truth, final_estimate, data_range=ground_truth.max())
+        final_estimate = np.clip(final_estimate, 0, 1)  # Clamp to valid range
+        final_psnr = peak_signal_noise_ratio(ground_truth, final_estimate, data_range=1.0)
+        final_ssim = structural_similarity(ground_truth, final_estimate, data_range=1.0)
         final_mse = np.mean((ground_truth - final_estimate) ** 2)
         final_mae = np.mean(np.abs(ground_truth - final_estimate))
     

@@ -48,8 +48,23 @@ def test_observation_range():
     print("✓ test_observation_range passed")
 
 
+def test_psnr_positive():
+    """PSNR should be positive for reasonable reconstructions."""
+    from skimage.metrics import peak_signal_noise_ratio
+    
+    gt = np.random.rand(64, 64)
+    # Simulated "reconstruction" - similar but not identical
+    recon = gt + np.random.randn(64, 64) * 0.1
+    recon = np.clip(recon, 0, 1)  # Must clamp!
+    
+    psnr = peak_signal_noise_ratio(gt, recon, data_range=1.0)
+    assert psnr > 0, f"PSNR should be positive, got {psnr}"
+    print(f"✓ test_psnr_positive passed (PSNR={psnr:.1f}dB)")
+
+
 if __name__ == '__main__':
     test_image_range()
     test_psf_normalized()
     test_observation_range()
+    test_psnr_positive()
     print("\n✅ All sanity tests passed!")
