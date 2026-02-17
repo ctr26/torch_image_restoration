@@ -117,6 +117,7 @@ def generate_psf(config: Dict[str, Any]) -> np.ndarray:
         sigma = config['sigma']
         psf[center] = gain
         psf = gaussian_filter(psf, sigma=sigma)
+        psf = psf / psf.sum()  # Normalize to sum=1
     
     elif psf_type == 'defocus':
         # Simulated defocus (disk)
