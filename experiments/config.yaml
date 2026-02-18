@@ -10,6 +10,37 @@
 # 2. Grid searches: explore interactions between variables
 # 3. Theory-driven experiments: RL-seeding, SNR sweeps
 # 4. Metrics: PSNR, SSIM, MSE, convergence speed, compute time
+#
+# ============================================================================
+# SWEEP RESULTS (2026-02-18) — warmup=50, astronaut/gaussian_medium/medium_noise
+# ============================================================================
+#
+# OPTIMIZER SWEEP (10 optimizers × warmup=50, constant LR):
+#   Rank | Optimizer     | PSNR   | SSIM   | Iters
+#   1    | sgd           | 22.762 | 0.7445 | 51  (fast converge via RL init)
+#   2    | sgd_momentum  | 22.762 | 0.7445 | 51
+#   3    | adadelta      | 22.754 | 0.7436 | 500
+#   4    | radam         | 20.052 | 0.5838 | 500
+#   5    | adamw         | 17.501 | 0.4828 | 500
+#   6    | adam          | 17.489 | 0.4825 | 500
+#   7    | adagrad       | 17.292 | 0.4700 | 500
+#   8    | rmsprop       | 16.062 | 0.4277 | 500
+#   9    | nadam         | 16.006 | 0.4293 | 500
+#   -    | lbfgs         | FAILED (conv2d shape mismatch with 64x64 PSF)
+#
+#   Key finding: SGD (with or without momentum) wins decisively when RL warmup
+#   provides a good initialization. Adaptive methods (Adam family) overshoot
+#   the RL-warmed solution. Adadelta is the best adaptive option.
+#
+# SCHEDULER SWEEP (sgd optimizer × 6 schedulers × warmup=50):
+#   All schedulers converged to essentially the same PSNR (22.886) in 51 iters.
+#   The RL warmup dominates — scheduler choice has minimal impact post-warmup.
+#   Winner by PSNR (tied): constant, cosine, step, reduce_on_plateau,
+#                           cosine_warm_restarts, one_cycle
+#   Recommendation: cosine (smooth, principled) or constant (simplest).
+#
+# OVERALL WINNER: sgd + constant (or cosine) scheduler + warmup=50
+#   PSNR=22.886, SSIM=0.7521
 # ============================================================================
 
 # ----------------------------------------------------------------------------
@@ -124,18 +155,19 @@ experiments:
       - 5e-3
       - 1e-2
     
-    # Optimizers to test
+    # Optimizers to test (10 total; LBFGS tested separately)
     optimizers:
-      - "sgd"
-      - "sgd_momentum"
+      - "sgd"           # no momentum (sweep winner, tied)
+      - "sgd_momentum"  # momentum=0.9 (sweep winner, tied)
       - "adam"
       - "adamw"
       - "rmsprop"
       - "adagrad"
-      - "adadelta"
+      - "adadelta"      # best adaptive optimizer in sweep
       - "nadam"
       - "radam"
       # Note: LBFGS requires special handling (closure-based), tested separately
+      # Note: lbfgs currently fails with 64x64 PSF due to shape mismatch in closure
 
   # --------------------------------------------------------------------------
   # Experiment 2: Scheduler Comparison (Fixed Optimizer, Vary Scheduler)
@@ -152,15 +184,18 @@ experiments:
     initial_lr: 1e-3
     max_iterations: 1000
     
-    # Schedulers to test
+    # Schedulers to test (6 from sweep + exponential/cyclic for completeness)
     schedulers:
-      - "constant"
-      - "step"
-      - "exponential"
-      - "cosine"
-      - "cosine_warm_restarts"
-      - "cyclic"
-      # Note: reduce_on_plateau and one_cycle require special handling
+      - "constant"              # baseline — no decay
+      - "cosine"                # CosineAnnealingLR (recommended)
+      - "step"                  # StepLR every 50 iters, gamma=0.5
+      - "reduce_on_plateau"     # ReduceLROnPlateau (sweep joint winner)
+      - "one_cycle"             # OneCycleLR — requires total_steps arg
+      - "cosine_warm_restarts"  # SGDR warm restarts
+      - "exponential"           # ExponentialLR (for completeness)
+      - "cyclic"                # CyclicLR (for completeness)
+      # Sweep result: all 6 new schedulers converged identically (PSNR≈22.886)
+      # when RL warmup=50 is used. Scheduler choice matters more without warmup.
 
   # --------------------------------------------------------------------------
   # Experiment 3: Grid Search (Optimizer × Scheduler)
