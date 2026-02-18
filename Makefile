@@ -3,22 +3,22 @@
 all: build install test
 
 build:
-	poetry build
+	uv build
 
 install:
-	poetry install
+	uv sync
 
 test:
-	poetry run pytest
+	uv run pytest
 
 test.notebooks:
-	poetry run pytest --nbmake **/*ipynb
+	uv run pytest --nbmake **/*ipynb
 
 lint:
-	poetry run ruff check .
+	uv run ruff check .
 
 typecheck:
-	poetry run mypy .
+	uv run mypy .
 
 prepush: lint typecheck test
 	@echo "✅ Ready to push"
